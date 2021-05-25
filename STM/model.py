@@ -5,7 +5,6 @@ import torch.nn.functional as F
 import torch.nn.init as init
 import torch.utils.model_zoo as model_zoo
 from torchvision import models
-
 import cv2
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -30,7 +29,6 @@ class ResBlock(nn.Module):
  
         self.conv1 = nn.Conv2d(indim, outdim, kernel_size=3, padding=1, stride=stride)
         self.conv2 = nn.Conv2d(outdim, outdim, kernel_size=3, padding=1)
- 
  
     def forward(self, x):
         r = self.conv1(F.relu(x))
@@ -103,7 +101,6 @@ class Encoder_Q(nn.Module):
         r4 = self.res4(r3)    # 1/8, 1024
         
         return r4, r3, r2, c1, f
-
 
 class Refine(nn.Module):
     def __init__(self, inplanes, planes, scale_factor=2):
