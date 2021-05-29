@@ -48,3 +48,6 @@ The ConvNet is trained to refine the previous mask to the current frame
 - Query key와 memory key의 similarity를 dot product로 계산한 후 softmax값을 memory value과 weighted sum을 한다. 이렇게 read된 memory는 query value와 concat되어 최종 read output이 된다.
 
 ![캡처10](https://user-images.githubusercontent.com/74402562/117539319-0a7b0b00-b045-11eb-9b6e-a579f5db0ceb.PNG)
+
+-----------------------------------------
+## STCNN(Spatiotemporal CNN for Video Object Segmentation) [[Paper]](https://arxiv.org/pdf/1904.02363.pdf)
