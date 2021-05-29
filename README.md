@@ -51,3 +51,4 @@ The ConvNet is trained to refine the previous mask to the current frame
 
 -----------------------------------------
 ## STCNN(Spatiotemporal CNN for Video Object Segmentation) [[Paper]](https://arxiv.org/pdf/1904.02363.pdf)
+- GAN의 구조 사용
