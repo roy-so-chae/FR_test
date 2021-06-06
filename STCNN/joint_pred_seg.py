@@ -1,3 +1,136 @@
+class FramePredEncoder(nn.Module):
+	def __init__(self,frame_nums=4):
+		self.inplanes = 64
+		layers = [3, 4, 23, 3]
+		block = Bottleneck
+		super(FramePredEncoder, self).__init__()
+		self.conv1 = nn.Conv2d(frame_nums*3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+		self.bn1 = nn.BatchNorm2d(64)
+		self.relu = nn.ReLU(inplace=True)
+		# maxpool different from pytorch-resnet, to match tf-faster-rcnn
+		self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+		self.layer1 = self._make_layer(block, 64, layers[0])
+		self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
+		self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+		self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+
+		self._initialize_weights()
+
+	def _initialize_weights(self):
+		for m in self.modules():
+			if isinstance(m, nn.Conv2d):
+				n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+				m.weight.data.normal_(0, math.sqrt(2. / n))
+				if m.bias is not None:
+					m.bias.data.zero_()
+			elif isinstance(m, nn.BatchNorm2d):
+				m.weight.data.fill_(1)
+				m.bias.data.zero_()
+			elif isinstance(m, nn.Linear):
+				m.weight.data.normal_(0, 0.01)
+				m.bias.data.zero_()
+			elif isinstance(m, nn.ConvTranspose2d):
+				m.weight.data.zero_()
+				m.weight.data = interp_surgery(m)
+
+	def _make_layer(self, block, planes, blocks, stride=1):
+		downsample = None
+		if stride != 1 or self.inplanes != planes * block.expansion:
+			downsample = nn.Sequential(
+			  nn.Conv2d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False),
+			  nn.BatchNorm2d(planes * block.expansion)
+			)
+		layers = []
+		layers.append(block(self.inplanes, planes, stride, downsample=downsample))
+		self.inplanes = planes * block.expansion
+		for i in range(1, blocks):
+			layers.append(block(self.inplanes, planes))
+
+		return nn.Sequential(*layers)
+
+	def forward(self, x, return_feature_maps=False):
+		conv_out = []
+		x = self.conv1(x)
+		x = self.bn1(x)
+		x = self.relu(x)
+		x = self.maxpool(x)
+
+		x = self.layer1(x); conv_out.append(x);
+		x = self.layer2(x); conv_out.append(x);
+		x = self.layer3(x); conv_out.append(x);
+		x = self.layer4(x); conv_out.append(x);
+		if return_feature_maps:
+			return conv_out
+		
+		return [x]
+
+class FramePredDecoder(nn.Module):
+	def __init__(self):
+		super(FramePredDecoder, self).__init__()
+		# Decoder
+		self.convC_1 = nn.Conv2d(512 * 4, 512 * 2, kernel_size=1, stride=1)
+		self.convC_2 = nn.Conv2d(512 * 2, 512, kernel_size=1, stride=1)
+		self.convC_3 = nn.Conv2d(512, 256, kernel_size=1, stride=1)
+
+		self.de_layer1 = nn.Sequential(nn.Conv2d(512 * 2, 512, kernel_size=3, stride=1, padding=1),
+					       nn.BatchNorm2d(512),
+					       # nn.ReLU(inplace=True),
+					       nn.ConvTranspose2d(512, 512, kernel_size=4, stride=2, bias=False)
+					      )
+
+		self.de_layer2 = nn.Sequential(nn.Conv2d(512 * 2, 256, kernel_size=3, stride=1, padding=1),
+					       nn.BatchNorm2d(256),
+					       # nn.ReLU(inplace=True),
+					       nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, bias=False)
+					      )
+
+		self.de_layer3 = nn.Sequential(nn.Conv2d(256 * 2, 64, kernel_size=3, stride=1, padding=1),
+					       nn.BatchNorm2d(64),
+					       # nn.ReLU(inplace=True),
+					       nn.ConvTranspose2d(64, 64, kernel_size=4, stride=2, bias=False),
+					       nn.Conv2d(64, 3, kernel_size=1, stride=1)
+					      )
+		self._initialize_weights()
+
+	def _initialize_weights(self):
+		for m in self.modules():
+			if isinstance(m, nn.Conv2d):
+				n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+				m.weight.data.normal_(0, math.sqrt(2. / n))
+				if m.bias is not None:
+					m.bias.data.zero_()
+			elif isinstance(m, nn.BatchNorm2d):
+				m.weight.data.fill_(1)
+				m.bias.data.zero_()
+			elif isinstance(m, nn.Linear):
+				m.weight.data.normal_(0, 0.01)
+				m.bias.data.zero_()
+			elif isinstance(m, nn.ConvTranspose2d):
+				m.weight.data.zero_()
+				m.weight.data = interp_surgery(m)
+
+	def forward(self, conv_feats, return_feature_maps=False):
+		conv_out = []
+		x4 = self.convC_1(conv_feats[-1])
+		out1 = self.de_layer1(x4)
+		out1 = crop_like(out1, conv_feats[-2]);conv_out.append(out1);
+		x3 = self.convC_2(conv_feats[-2])
+		out2 = self.de_layer2(torch.cat((out1, x3), 1))
+		out2 = crop_like(out2, conv_feats[-3]);conv_out.append(out2);
+		x2 = self.convC_3(conv_feats[-3])
+		out3 = torch.cat((out2, x2), 1)
+		modulelist = list(self.de_layer3.modules())
+		for l in modulelist[1:-1]:
+			out3 = l(out3)
+		out3 = crop_like(out3, conv_feats[-4]);conv_out.append(out3);
+		out4 = modulelist[-1](out3)
+		pred = F.tanh(out4)
+
+		if return_feature_maps:
+			return pred, conv_out
+		
+		return pred
+
 class JointSegDecoder(nn.Module):
 	def __init__(self, num_class=1, fc_dim=2048, pool_scales=(1, 2, 3, 6),
 				 fpn_inplanes=(256,512,1024,2048), fpn_dim=256,freez_bn=True):
